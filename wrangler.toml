@@ -6,3 +6,9 @@ compatibility_date = "2024-09-23"
 directory = "./public"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
+
+# Site key is public (safe in frontend). Secret must be set via:
+#   npx wrangler secret put TURNSTILE_SECRET
+# Do NOT commit the secret.
+[vars]
+TURNSTILE_SITE_KEY = "0x4AAAAAAFUGVoPSaNDYu8nA"

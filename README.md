@@ -1,44 +1,36 @@
 # Lagos Life Gift
 
-Free **1,000,000** Lagos Life cash gift site.
+Free Lagos Life cash gift site (up to **10M**).
 
-Users enter their Lagos Life username → async gift job → poll until completed.
+- Neo-brutalist UI (DC-Labs style) + hamster loader
+- **Cloudflare Turnstile** bot protection
+- Real API is **never exposed** — browser only talks to `/api/*` on this Worker
 
-**UI:** Neo-brutalist style from [DC-Labs](https://github.com/DavidCyril1/DC-Labs) + hamster wheel loader.
-
-**API:** `https://apis.davidcyril.name.ng/lagoslife/gift`
-
----
-
-## Deploy on Cloudflare Workers
+## Deploy
 
 ```bash
 npm install
 npx wrangler login
+
+# REQUIRED — set Turnstile secret (never commit this)
+npx wrangler secret put TURNSTILE_SECRET
+# paste: 0x4AAAAAAFUGVg5-ebfebaFIzqeF8tKxHgI
+
 npx wrangler deploy
 ```
 
-Or with Cloudflare Pages (drag-and-drop `index.html` or connect this repo).
-
----
-
-## Local preview
+## Local
 
 ```bash
+npx wrangler secret put TURNSTILE_SECRET   # once
 npx wrangler dev
-# open http://localhost:8787
 ```
 
----
+## API (same-origin only)
 
-## Flow
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/gift` | Start gift — body: `{ to, amount?, cf_turnstile_response }` |
+| `GET`  | `/api/job/:id` | Poll job status |
 
-1. `GET /lagoslife/gift?to=USERNAME` → `{ job_id }`
-2. Poll `GET /job/{job_id}` every ~2.5s
-3. Show success / error
-
-No API key required on these public routes.
-
----
-
-Powered by [David Cyril Tech API](https://apis.davidcyril.name.ng)
+Upstream API is proxied server-side. Max amount: **10,000,000**.
