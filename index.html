@@ -7,6 +7,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎁</text></svg>">
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
   <style>
     :root {
       --black:  #0d0d0d;
@@ -626,6 +627,98 @@
     const MAX_AMOUNT = 10000000;
     let selectedAmount = 1000000;
     let turnstileToken = null;
+
+    const CD_KEY = 'll_cooldown_v1';
+
+    function cooldownMsFor(amount) {
+      if (amount >= 10000000) return 6 * 60 * 60 * 1000;
+      if (amount >= 7500000)  return 4 * 60 * 60 * 1000;
+      if (amount >= 5000000)  return 2 * 60 * 60 * 1000;
+      if (amount >= 2500000)  return 60 * 60 * 1000;
+      return 15 * 60 * 1000;
+    }
+
+    function formatLeft(ms) {
+      const sec = Math.ceil(ms / 1000);
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      if (h > 0) return h + 'h ' + m + 'm';
+      if (m > 0) return m + 'm ' + s + 's';
+      return s + 's';
+    }
+
+    function getLocalCooldown() {
+      try {
+        const raw = localStorage.getItem(CD_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw);
+      } catch { return null; }
+    }
+
+    function setLocalCooldown(amount) {
+      const until = Date.now() + cooldownMsFor(amount);
+      localStorage.setItem(CD_KEY, JSON.stringify({ until, amount }));
+    }
+
+    function checkLocalCooldown() {
+      const cd = getLocalCooldown();
+      if (!cd || !cd.until) return null;
+      const left = cd.until - Date.now();
+      if (left <= 0) {
+        localStorage.removeItem(CD_KEY);
+        return null;
+      }
+      return left;
+    }
+
+    function fireConfetti() {
+      if (typeof confetti !== 'function') return;
+      const duration = 3200;
+      const end = Date.now() + duration;
+      const colors = ['#f5e642', '#00c566', '#3a5cff', '#ff3fa4', '#ff8c42', '#e5180e'];
+
+      (function frame() {
+        confetti({
+          particleCount: 4,
+          angle: 60,
+          spread: 55,
+          origin: { x: 0, y: 0.7 },
+          colors: colors,
+          zIndex: 9999
+        });
+        confetti({
+          particleCount: 4,
+          angle: 120,
+          spread: 55,
+          origin: { x: 1, y: 0.7 },
+          colors: colors,
+          zIndex: 9999
+        });
+        if (Date.now() < end) requestAnimationFrame(frame);
+      })();
+
+      // Big center burst
+      confetti({
+        particleCount: 120,
+        spread: 100,
+        startVelocity: 45,
+        origin: { x: 0.5, y: 0.55 },
+        colors: colors,
+        zIndex: 9999
+      });
+      setTimeout(function () {
+        confetti({
+          particleCount: 80,
+          spread: 160,
+          startVelocity: 30,
+          origin: { x: 0.5, y: 0.4 },
+          colors: colors,
+          zIndex: 9999
+        });
+      }, 400);
+    }
+
     let pollTimer = null;
 
     function $(id) { return document.getElementById(id); }
@@ -689,6 +782,11 @@
       }
       if (!turnstileToken) {
         alert('Please complete the security check.');
+        return;
+      }
+      const localLeft = checkLocalCooldown();
+      if (localLeft) {
+        alert('Cooldown active after a large claim. Try again in ' + formatLeft(localLeft) + '.');
         return;
       }
 
@@ -769,6 +867,8 @@
       $('resultBadgeText').textContent = 'Gift Sent';
 
       const amount = data.amount || data.gift?.amount || selectedAmount;
+      setLocalCooldown(Number(amount) || selectedAmount);
+      fireConfetti();
       const to = data.to || username;
       const note = data.note || '';
       const fee = data.sendResult?.fee;
