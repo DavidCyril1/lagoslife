@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Lagos Life Gift — Free 1M</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎁</text></svg>">
+  <style>
+    :root {
+      --black:  #0d0d0d;
+      --white:  #f5f0e8;
+      --yellow: #f5e642;
+      --red:    #e5180e;
+      --green:  #00c566;
+      --blue:   #3a5cff;
+      --pink:   #ff3fa4;
+      --purple: #a855f7;
+      --orange: #ff8c42;
+      --border: 3px solid #0d0d0d;
+      --shadow: 5px 5px 0px #0d0d0d;
+      --shadow-lg: 7px 7px 0px #0d0d0d;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Space Grotesk', sans-serif;
+      background: var(--white);
+      background-image:
+        repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(0,0,0,0.06) 39px, rgba(0,0,0,0.06) 40px),
+        repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(0,0,0,0.06) 39px, rgba(0,0,0,0.06) 40px);
+      color: var(--black);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 32px 16px 48px;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .header {
+      width: 100%;
+      max-width: 480px;
+      margin-bottom: 28px;
+      text-align: center;
+    }
+    .header h1 {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      margin-bottom: 6px;
+    }
+    .header p {
+      font-size: 14px;
+      font-weight: 600;
+      opacity: 0.7;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--yellow);
+      border: var(--border);
+      box-shadow: 3px 3px 0 var(--black);
+      padding: 5px 12px;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 14px;
+    }
+    .wrapper {
+      width: 100%;
+      max-width: 480px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .form-card {
+      border: var(--border);
+      box-shadow: var(--shadow);
+      background: #fff;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .input-group label {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .input-group input {
+      width: 100%;
+      padding: 14px 16px;
+      border: var(--border);
+      background: var(--white);
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--black);
+      outline: none;
+      box-shadow: 2px 2px 0 var(--black);
+      transition: box-shadow 0.1s, transform 0.1s;
+    }
+    .input-group input:focus {
+      transform: translate(-1px, -1px);
+      box-shadow: 4px 4px 0 var(--black);
+    }
+    .input-group input::placeholder {
+      color: #999;
+      font-weight: 500;
+    }
+    .btn-gift {
+      width: 100%;
+      padding: 16px;
+      border: var(--border);
+      background: var(--green);
+      color: #fff;
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 15px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      cursor: pointer;
+      box-shadow: var(--shadow);
+      transition: transform 0.1s, box-shadow 0.1s;
+    }
+    .btn-gift:hover:not(:disabled) {
+      transform: translate(-2px, -2px);
+      box-shadow: 7px 7px 0 var(--black);
+    }
+    .btn-gift:active:not(:disabled) {
+      transform: translate(2px, 2px);
+      box-shadow: 2px 2px 0 var(--black);
+    }
+    .btn-gift:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    /* Hamster loader */
+    .hamster-loader {
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 24px 0;
+      gap: 14px;
+    }
+    .hamster-loader.show { display: flex; }
+    .wheel-and-hamster {
+      --dur: 1s;
+      position: relative;
+      width: 8em;
+      height: 8em;
+      font-size: 14px;
+      overflow: hidden;
+      border-radius: 50%;
+    }
+    .wheel, .hamster, .hamster div, .spoke { position: absolute; }
+    .wheel, .spoke {
+      border-radius: 50%;
+      top: 0; left: 0; width: 100%; height: 100%;
+    }
+    .wheel {
+      background: radial-gradient(100% 100% at center,hsla(0,0%,60%,0) 47.8%,hsl(0,0%,60%) 48%);
+      z-index: 2;
+    }
+    .hamster {
+      animation: hamster var(--dur) ease-in-out infinite;
+      top: 50%;
+      left: calc(50% - 2.8em);
+      width: 5.6em; height: 3em;
+      transform: rotate(2deg) translate(-0.4em, 1em);
+      transform-origin: 50% 0;
+      z-index: 1;
+    }
+    .hamster__head {
+      animation: hamsterHead var(--dur) ease-in-out infinite;
+      background: hsl(30,90%,55%);
+      border-radius: 70% 30% 0 100% / 40% 25% 25% 60%;
+      box-shadow: 0 -0.25em 0 hsl(30,90%,80%) inset, 0.75em -1.55em 0 hsl(30,90%,90%) inset;
+      top: 0; left: -1.6em; width: 2.2em; height: 2em;
+      transform-origin: 100% 50%;
+    }
+    .hamster__ear {
+      animation: hamsterEar var(--dur) ease-in-out infinite;
+      background: hsl(0,90%,85%);
+      border-radius: 50%;
+      box-shadow: -0.25em 0 hsl(30,90%,55%) inset;
+      top: -0.2em; right: -0.2em; width: 0.6em; height: 0.6em;
+      transform-origin: 50% 75%;
+    }
+    .hamster__eye {
+      animation: hamsterEye var(--dur) linear infinite;
+      background-color: hsl(0,0%,0%);
+      border-radius: 50%;
+      top: 0.3em; left: 1em; width: 0.4em; height: 0.4em;
+    }
+    .hamster__nose {
+      background: hsl(0,90%,75%);
+      border-radius: 35% 65% 85% 15% / 70% 50% 50% 30%;
+      top: 0.6em; left: 0; width: 0.16em; height: 0.2em;
+    }
+    .hamster__body {
+      animation: hamsterBody var(--dur) ease-in-out infinite;
+      background: hsl(30,90%,90%);
+      border-radius: 50% 30% 50% 30% / 15% 60% 40% 40%;
+      box-shadow: 0.1em 0.75em 0 hsl(30,90%,55%) inset, 0.15em -0.5em 0 hsl(30,90%,80%) inset;
+      top: 0.2em; left: 1.2em; width: 3.6em; height: 2.4em;
+      transform-origin: 17% 50%;
+      transform-style: preserve-3d;
+    }
+    .hamster__limb--fr, .hamster__limb--fl {
+      clip-path: polygon(0 0,100% 0,70% 80%,60% 100%,0% 100%,40% 80%);
+      top: 1.6em; left: 0.4em; width: 0.8em; height: 1.2em;
+      transform-origin: 50% 0;
+    }
+    .hamster__limb--fr {
+      animation: hamsterFRLimb var(--dur) linear infinite;
+      background: linear-gradient(hsl(30,90%,80%) 80%,hsl(0,90%,75%) 80%);
+      transform: rotate(15deg) translateZ(-1px);
+    }
+    .hamster__limb--fl {
+      animation: hamsterFLLimb var(--dur) linear infinite;
+      background: linear-gradient(hsl(30,90%,90%) 80%,hsl(0,90%,85%) 80%);
+      transform: rotate(15deg);
+    }
+    .hamster__limb--br, .hamster__limb--bl {
+      border-radius: 0.75em 0.75em 0 0;
+      clip-path: polygon(0 0,100% 0,100% 30%,70% 90%,70% 100%,30% 100%,40% 90%,0% 30%);
+      top: 0.8em; left: 2.2em; width: 1.2em; height: 2em;
+      transform-origin: 50% 30%;
+    }
+    .hamster__limb--br {
+      animation: hamsterBRLimb var(--dur) linear infinite;
+      background: linear-gradient(hsl(30,90%,80%) 90%,hsl(0,90%,75%) 90%);
+      transform: rotate(-25deg) translateZ(-1px);
+    }
+    .hamster__limb--bl {
+      animation: hamsterBLLimb var(--dur) linear infinite;
+      background: linear-gradient(hsl(30,90%,90%) 90%,hsl(0,90%,85%) 90%);
+      transform: rotate(-25deg);
+    }
+    .hamster__tail {
+      animation: hamsterTail var(--dur) linear infinite;
+      background: hsl(0,90%,85%);
+      border-radius: 0.25em 50% 50% 0.25em;
+      box-shadow: 0 -0.2em 0 hsl(0,90%,75%) inset;
+      top: 1.2em; right: -0.3em; width: 0.8em; height: 0.4em;
+      transform: rotate(30deg) translateZ(-1px);
+      transform-origin: 0.25em 0.25em;
+    }
+    .spoke {
+      animation: spoke var(--dur) linear infinite;
+      background: radial-gradient(100% 100% at center,hsl(0,0%,60%) 4.8%,hsla(0,0%,60%,0) 5%), linear-gradient(hsla(0,0%,55%,0) 46.9%,hsl(0,0%,65%) 47% 52.9%,hsla(0,0%,65%,0) 53%) 50% 50% / 99% 99% no-repeat;
+    }
+    @keyframes hamster {
+      from, to { transform: rotate(2deg) translate(-0.4em, 1em); }
+      50% { transform: rotate(0) translate(-0.4em, 1em); }
+    }
+    @keyframes hamsterHead {
+      from, 25%, 50%, 75%, to { transform: rotate(0); }
+      12.5%, 37.5%, 62.5%, 87.5% { transform: rotate(8deg); }
+    }
+    @keyframes hamsterEye {
+      from, 90%, to { transform: scaleY(1); }
+      95% { transform: scaleY(0); }
+    }
+    @keyframes hamsterEar {
+      from, 25%, 50%, 75%, to { transform: rotate(0); }
+      12.5%, 37.5%, 62.5%, 87.5% { transform: rotate(12deg); }
+    }
+    @keyframes hamsterBody {
+      from, 25%, 50%, 75%, to { transform: rotate(0); }
+      12.5%, 37.5%, 62.5%, 87.5% { transform: rotate(-2deg); }
+    }
+    @keyframes hamsterFRLimb {
+      from, 25%, 50%, 75%, to { transform: rotate(50deg) translateZ(-1px); }
+      12.5%, 37.5%, 62.5%, 87.5% { transform: rotate(-30deg) translateZ(-1px); }
+    }
+    @keyframes hamsterFLLimb {
+      from, 25%, 50%, 75%, to { transform: rotate(-30deg); }
+      12.5%, 37.5%, 62.5%, 87.5% { transform: rotate(50deg); }
+    }
+    @keyframes hamsterBRLimb {
+      from, 25%, 50%, 75%, to { transform: rotate(-60deg) translateZ(-1px); }
+      12.5%, 37.5%, 62.5%, 87.5% { transform: rotate(20deg) translateZ(-1px); }
+    }
+    @keyframes hamsterBLLimb {
+      from, 25%, 50%, 75%, to { transform: rotate(20deg); }
+      12.5%, 37.5%, 62.5%, 87.5% { transform: rotate(-60deg); }
+    }
+    @keyframes hamsterTail {
+      from, 25%, 50%, 75%, to { transform: rotate(30deg) translateZ(-1px); }
+      12.5%, 37.5%, 62.5%, 87.5% { transform: rotate(10deg) translateZ(-1px); }
+    }
+    @keyframes spoke {
+      from { transform: rotate(0); }
+      to { transform: rotate(-1turn); }
+    }
+
+    .progress-wrap {
+      width: 100%;
+      max-width: 220px;
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      align-items: center;
+    }
+    .progress-wrap.show { display: flex; }
+    .progress-bar-bg {
+      width: 100%;
+      height: 12px;
+      border: var(--border);
+      background: var(--white);
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: var(--blue);
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+    .progress-text {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .result-card {
+      display: none;
+      border: var(--border);
+      box-shadow: var(--shadow);
+      background: #fff;
+      padding: 20px;
+      flex-direction: column;
+      gap: 14px;
+      animation: popIn 0.25s ease;
+    }
+    .result-card.show { display: flex; }
+    @keyframes popIn {
+      from { opacity: 0; transform: scale(0.97) translateY(8px); }
+      to   { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    .result-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--green);
+      border: var(--border);
+      box-shadow: 3px 3px 0 var(--black);
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #fff;
+      width: fit-content;
+    }
+    .result-badge.error {
+      background: var(--red);
+    }
+    .result-badge .dot {
+      width: 8px; height: 8px;
+      background: #fff;
+      border-radius: 50%;
+      animation: pulse 1.4s infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity:1; transform:scale(1); }
+      50% { opacity:0.4; transform:scale(0.7); }
+    }
+    .result-details {
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.5;
+    }
+    .result-details strong {
+      font-weight: 800;
+    }
+    .result-meta {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      opacity: 0.7;
+      margin-top: 4px;
+    }
+    .btn-again {
+      width: 100%;
+      padding: 14px;
+      border: var(--border);
+      background: var(--blue);
+      color: #fff;
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      cursor: pointer;
+      box-shadow: var(--shadow);
+      transition: transform 0.1s, box-shadow 0.1s;
+    }
+    .btn-again:hover {
+      transform: translate(-1px,-1px);
+      box-shadow: 6px 6px 0 var(--black);
+    }
+    .btn-again:active {
+      transform: translate(2px,2px);
+      box-shadow: 2px 2px 0 var(--black);
+    }
+
+    .footer {
+      margin-top: 32px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #999;
+      text-align: center;
+    }
+    .footer a {
+      color: var(--blue);
+      text-decoration: none;
+    }
+    .footer a:hover { text-decoration: underline; }
+
+    .info-box {
+      border: var(--border);
+      box-shadow: 3px 3px 0 var(--black);
+      background: #fff;
+      padding: 12px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.45;
+      opacity: 0.85;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="badge">🎁 Free Gift</div>
+    <h1>Lagos Life Gift</h1>
+    <p>Enter your username &amp; claim <strong>1,000,000</strong> in-game cash</p>
+  </div>
+
+  <div class="wrapper">
+    <div class="form-card" id="formCard">
+      <div class="input-group">
+        <label for="username">Lagos Life Username</label>
+        <input type="text" id="username" placeholder="e.g. davidcyriltech" autocomplete="off" spellcheck="false">
+      </div>
+      <button class="btn-gift" id="giftBtn" onclick="startGift()">Claim 1M Gift</button>
+    </div>
+
+    <div class="hamster-loader" id="hamsterLoader">
+      <div aria-label="Loading" role="img" class="wheel-and-hamster">
+        <div class="wheel"></div>
+        <div class="hamster">
+          <div class="hamster__body">
+            <div class="hamster__head">
+              <div class="hamster__ear"></div>
+              <div class="hamster__eye"></div>
+              <div class="hamster__nose"></div>
+            </div>
+            <div class="hamster__limb hamster__limb--fr"></div>
+            <div class="hamster__limb hamster__limb--fl"></div>
+            <div class="hamster__limb hamster__limb--br"></div>
+            <div class="hamster__limb hamster__limb--bl"></div>
+            <div class="hamster__tail"></div>
+          </div>
+        </div>
+        <div class="spoke"></div>
+      </div>
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progressFill"></div>
+        </div>
+        <div class="progress-text" id="progressText">0%</div>
+      </div>
+    </div>
+
+    <div class="result-card" id="resultCard">
+      <div class="result-badge" id="resultBadge">
+        <span class="dot"></span>
+        <span id="resultBadgeText">Success</span>
+      </div>
+      <div class="result-details" id="resultDetails"></div>
+      <button class="btn-again" onclick="resetForm()">Send Another</button>
+    </div>
+
+    <div class="info-box">
+      Powered by the public Lagos Life Gift API. Async job — may take 10–60s. Team gift may expire after 2026-10-11 23:00 UTC.
+    </div>
+  </div>
+
+  <div class="footer">
+    Built with ❤️ · <a href="https://apis.davidcyril.name.ng" target="_blank" rel="noopener">David Cyril Tech API</a>
+  </div>
+
+  <script>
+    const API_BASE = 'https://apis.davidcyril.name.ng';
+    let pollTimer = null;
+
+    function $(id) { return document.getElementById(id); }
+
+    function show(el) { el.classList.add('show'); }
+    function hide(el) { el.classList.remove('show'); }
+
+    function setProgress(pct) {
+      $('progressFill').style.width = pct + '%';
+      $('progressText').textContent = Math.round(pct) + '%';
+    }
+
+    function resetForm() {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = null;
+      hide($('hamsterLoader'));
+      hide($('progressWrap'));
+      hide($('resultCard'));
+      show($('formCard'));
+      $('giftBtn').disabled = false;
+      $('username').value = '';
+      $('username').focus();
+      setProgress(0);
+    }
+
+    async function startGift() {
+      const username = $('username').value.trim();
+      if (!username) {
+        $('username').focus();
+        return;
+      }
+
+      $('giftBtn').disabled = true;
+      hide($('formCard'));
+      hide($('resultCard'));
+      show($('hamsterLoader'));
+      show($('progressWrap'));
+      setProgress(5);
+
+      try {
+        const startUrl = `${API_BASE}/lagoslife/gift?to=${encodeURIComponent(username)}`;
+        const startRes = await fetch(startUrl);
+        const startData = await startRes.json();
+
+        if (!startData.success || !startData.result || !startData.result.job_id) {
+          throw new Error(startData.result?.error || startData.error || 'Failed to start gift job');
+        }
+
+        const jobId = startData.result.job_id;
+        setProgress(15);
+
+        // Poll every 2.5s
+        pollTimer = setInterval(async () => {
+          try {
+            const jobRes = await fetch(`${API_BASE}/job/${jobId}`);
+            const jobData = await jobRes.json();
+            const result = jobData.result || jobData;
+
+            if (result.progress != null) {
+              setProgress(Math.min(95, Math.max(15, result.progress)));
+            }
+
+            if (result.status === 'completed') {
+              clearInterval(pollTimer);
+              pollTimer = null;
+              setProgress(100);
+              showSuccess(result.result || result, username);
+            } else if (result.status === 'failed') {
+              clearInterval(pollTimer);
+              pollTimer = null;
+              showError(result.error || 'Gift failed');
+            }
+          } catch (e) {
+            // keep polling on transient errors
+            console.warn('Poll error', e);
+          }
+        }, 2500);
+
+        // Safety timeout 3 min
+        setTimeout(() => {
+          if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+            showError('Timed out waiting for gift. Try again later.');
+          }
+        }, 180000);
+
+      } catch (err) {
+        showError(err.message || 'Network error');
+      }
+    }
+
+    function showSuccess(data, username) {
+      hide($('hamsterLoader'));
+      show($('resultCard'));
+      const badge = $('resultBadge');
+      badge.classList.remove('error');
+      $('resultBadgeText').textContent = 'Gift Sent';
+
+      const amount = data.amount || data.gift?.amount || 1000000;
+      const to = data.to || username;
+      const note = data.note || '';
+      const fee = data.sendResult?.fee;
+
+      let html = `<strong>${Number(amount).toLocaleString()}</strong> sent to <strong>${escapeHtml(to)}</strong>`;
+      if (note) html += `<div class="result-meta">Note: ${escapeHtml(note)}</div>`;
+      if (fee != null) html += `<div class="result-meta">Fee: ${fee}</div>`;
+      if (data.gift?.id) html += `<div class="result-meta">Gift ID: ${escapeHtml(data.gift.id)}</div>`;
+      $('resultDetails').innerHTML = html;
+    }
+
+    function showError(msg) {
+      hide($('hamsterLoader'));
+      show($('resultCard'));
+      const badge = $('resultBadge');
+      badge.classList.add('error');
+      $('resultBadgeText').textContent = 'Failed';
+      $('resultDetails').innerHTML = escapeHtml(msg);
+    }
+
+    function escapeHtml(str) {
+      const d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
+    }
+
+    // Enter key
+    $('username').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') startGift();
+    });
+  </script>
+</body>
+</html>
