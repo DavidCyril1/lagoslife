@@ -4,7 +4,7 @@
  */
 
 const UPSTREAM = 'https://apis.davidcyril.name.ng';
-const MAX_AMOUNT = 10_000_000;
+const MAX_AMOUNT = 1_000_000;
 const DEFAULT_AMOUNT = 1_000_000;
 const MIN_AMOUNT = 100;
 
