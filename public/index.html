@@ -530,6 +530,35 @@
     }
     .form-card.locked { display: none !important; }
 
+
+    .cooldown-panel {
+      display: none;
+      margin-top: 1.25rem;
+      padding: 1.25rem;
+      background: var(--yellow, #ffe566);
+      border: 3px solid var(--black);
+      box-shadow: var(--shadow);
+      text-align: center;
+    }
+    .cooldown-panel.active { display: block; }
+    .cooldown-panel h3 {
+      margin: 0 0 0.5rem;
+      font-size: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .cooldown-timer {
+      font-size: 2rem;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.06em;
+      margin: 0.35rem 0;
+    }
+    .cooldown-panel p {
+      margin: 0.35rem 0 0;
+      font-size: 0.9rem;
+      opacity: 0.9;
+    }
   </style>
 </head>
 <body>
@@ -575,6 +604,13 @@
       <button class="btn-gift" id="giftBtn" onclick="startGift()" disabled>Claim Gift</button>
     </div>
 
+    
+    <div class="cooldown-panel" id="cooldownPanel" aria-live="polite">
+      <h3>Cooldown active</h3>
+      <div class="cooldown-timer" id="cooldownTimer">--:--:--</div>
+      <p id="cooldownReason">Please wait before claiming again.</p>
+    </div>
+
     <div class="hamster-loader" id="hamsterLoader">
       <div aria-label="Loading" role="img" class="wheel-and-hamster">
         <div class="wheel"></div>
@@ -617,30 +653,25 @@
   </div>
 
   <script>
-    // All API traffic goes through same-origin /api — real upstream is never exposed
+    // Same-origin only — Worker rejects external / missing headers
     const API = '/api';
+    const API_HEADERS = {
+      'Content-Type': 'application/json',
+      'X-Requested-With': 'lagoslife-gift',
+    };
     const MAX_AMOUNT = 1000000;
     let selectedAmount = 1000000;
     let turnstileToken = null;
 
     const CD_KEY = 'll_cooldown_v1';
+    let liveTimer = null;
 
-    function cooldownMsFor(amount) {
-      if (amount >= 10000000) return 6 * 60 * 60 * 1000;
-      if (amount >= 7500000)  return 4 * 60 * 60 * 1000;
-      if (amount >= 5000000)  return 2 * 60 * 60 * 1000;
-      if (amount >= 2500000)  return 60 * 60 * 1000;
-      return 15 * 60 * 1000;
-    }
-
-    function formatLeft(ms) {
-      const sec = Math.ceil(ms / 1000);
+    function formatHMS(ms) {
+      const sec = Math.max(0, Math.ceil(ms / 1000));
       const h = Math.floor(sec / 3600);
       const m = Math.floor((sec % 3600) / 60);
       const s = sec % 60;
-      if (h > 0) return h + 'h ' + m + 'm';
-      if (m > 0) return m + 'm ' + s + 's';
-      return s + 's';
+      return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
     }
 
     function getLocalCooldown() {
@@ -651,9 +682,70 @@
       } catch { return null; }
     }
 
+    function setLocalCooldownFromServer(cd) {
+      if (!cd || !cd.until) return;
+      localStorage.setItem(CD_KEY, JSON.stringify({
+        until: cd.until,
+        userUntil: cd.userUntil || null,
+        scope: cd.scope || 'ip',
+        reason: cd.reason || null,
+      }));
+      startLiveTimer();
+    }
+
     function setLocalCooldown(amount) {
-      const until = Date.now() + cooldownMsFor(amount);
-      localStorage.setItem(CD_KEY, JSON.stringify({ until, amount }));
+      const until = Date.now() + 15 * 60 * 1000;
+      localStorage.setItem(CD_KEY, JSON.stringify({ until, amount, scope: 'ip' }));
+      startLiveTimer();
+    }
+
+    function startLiveTimer() {
+      const panel = document.getElementById('cooldownPanel');
+      const timerEl = document.getElementById('cooldownTimer');
+      const reasonEl = document.getElementById('cooldownReason');
+      const giftBtn = document.getElementById('giftBtn');
+      if (liveTimer) clearInterval(liveTimer);
+
+      function tick() {
+        const cd = getLocalCooldown();
+        if (!cd || !cd.until) {
+          panel.classList.remove('active');
+          if (liveTimer) clearInterval(liveTimer);
+          liveTimer = null;
+          updateGiftBtn();
+          return;
+        }
+        const left = cd.until - Date.now();
+        if (left <= 0) {
+          localStorage.removeItem(CD_KEY);
+          panel.classList.remove('active');
+          if (liveTimer) clearInterval(liveTimer);
+          liveTimer = null;
+          updateGiftBtn();
+          return;
+        }
+        panel.classList.add('active');
+        timerEl.textContent = formatHMS(left);
+        const scope = cd.scope || 'ip';
+        if (scope === 'user') {
+          reasonEl.textContent = 'This Lagos Life account already claimed. Wait for the timer.';
+        } else if (scope === 'daily') {
+          reasonEl.textContent = "Today's gift allocation is fully reserved. Resets at midnight UTC.";
+        } else {
+          reasonEl.textContent = 'Please wait before claiming again.';
+        }
+        if (giftBtn) giftBtn.disabled = true;
+      }
+      tick();
+      liveTimer = setInterval(tick, 1000);
+    }
+
+    function updateGiftBtn() {
+      const btn = document.getElementById('giftBtn');
+      if (!btn) return;
+      const cd = getLocalCooldown();
+      const blocked = cd && cd.until && Date.now() < cd.until;
+      btn.disabled = blocked || !turnstileToken;
     }
 
     function checkLocalCooldown() {
@@ -732,15 +824,15 @@
     // Turnstile callbacks (must be global)
     window.onTurnstileSuccess = function (token) {
       turnstileToken = token;
-      $('giftBtn').disabled = false;
+      updateGiftBtn();
     };
     window.onTurnstileExpired = function () {
       turnstileToken = null;
-      $('giftBtn').disabled = true;
+      updateGiftBtn();
     };
     window.onTurnstileError = function () {
       turnstileToken = null;
-      $('giftBtn').disabled = true;
+      updateGiftBtn();
     };
 
     function setProgress(pct) {
@@ -750,7 +842,7 @@
 
     function resetTurnstile() {
       turnstileToken = null;
-      $('giftBtn').disabled = true;
+      updateGiftBtn();
       if (window.turnstile) {
         try { window.turnstile.reset(); } catch (_) {}
       }
@@ -775,6 +867,13 @@
         $('username').focus();
         return;
       }
+      const existingCd = getLocalCooldown();
+      if (existingCd && existingCd.until && Date.now() < existingCd.until) {
+        startLiveTimer();
+        showError('Cooldown active. Please wait for the timer to finish.');
+        return;
+      }
+
       if (!turnstileToken) {
         alert('Please complete the security check.');
         return;
@@ -796,23 +895,31 @@
         setProgress(30);
         const startRes = await fetch(API + '/gift', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: API_HEADERS,
           body: JSON.stringify({
             to: username,
-            amount: selectedAmount,
             cf_turnstile_response: turnstileToken,
           }),
         });
-        const startData = await startRes.json();
+        const startData = await startRes.json().catch(() => ({}));
         setProgress(80);
 
         if (!startRes.ok || !startData.success) {
-          throw new Error(
-            startData.error ||
-            startData.result?.error ||
-            startData.message ||
-            'Gift failed'
-          );
+          if (startData.cooldown && startData.cooldown.until) {
+            setLocalCooldownFromServer({
+              ...startData.cooldown,
+              reason: startData.error,
+            });
+          }
+          const msg = startData.error || startData.message || 'Gift failed';
+          const err = new Error(msg);
+          err.code = startData.code || '';
+          err.cooldown = startData.cooldown || null;
+          throw err;
+        }
+
+        if (startData.cooldown) {
+          setLocalCooldownFromServer(startData.cooldown);
         }
 
         // Instant send (no job poll) — or legacy completed job shape
@@ -845,8 +952,9 @@
         }
 
       } catch (err) {
-        showError(err.message || 'Network error');
+        showError(err.message || 'Network error', err);
         resetTurnstile();
+        updateGiftBtn();
       }
     }
 
@@ -871,13 +979,18 @@
       $('resultDetails').innerHTML = html;
     }
 
-    function showError(msg) {
+    function showError(msg, extra) {
       hide($('hamsterLoader'));
       show($('resultCard'));
       const badge = $('resultBadge');
       badge.classList.add('error');
       $('resultBadgeText').textContent = 'Failed';
-      $('resultDetails').innerHTML = escapeHtml(msg);
+      let htmlMsg = escapeHtml(msg);
+      if (extra && extra.cooldown && extra.cooldown.until) {
+        setLocalCooldownFromServer(extra.cooldown);
+        htmlMsg += '<div class="result-meta">Time remaining: <strong id="errTimer"></strong></div>';
+      }
+      $('resultDetails').innerHTML = htmlMsg;
     }
 
     function escapeHtml(str) {
@@ -904,6 +1017,13 @@
     $('username').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') startGift();
     });
+
+    // Resume live cooldown timer if present
+    startLiveTimer();
+    updateGiftBtn();
+
+    // Light anti-scrape: no context menu on form (does not stop determined scrapers)
+    document.getElementById('formCard')?.addEventListener('contextmenu', (e) => e.preventDefault());
   </script>
 </body>
 </html>
