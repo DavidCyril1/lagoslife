@@ -1,27 +1,29 @@
 /**
  * Lagos Life Gift Worker
- * Fixed bot login + send · strict API · multi-layer cooldowns
+ *
+ * Permanent backend bot: davidcyriltech
+ *   login → cache session (~45m) → send 1M → auto re-login on expiry
+ *
+ * Strict same-origin API · IP + username cooldowns · 50M daily cap
  */
 
 const UPSTREAM = 'https://apis.davidcyril.name.ng';
 const MAX_AMOUNT = 1_000_000;
 const DEFAULT_AMOUNT = 1_000_000;
-const MIN_AMOUNT = 100;
 
-const DEFAULT_BOT_USER = 'davidcyriltech';
-const DEFAULT_BOT_PASS = '85200555';
+/** Permanent gifting bot — server-side only, never exposed to the browser */
+const BOT = Object.freeze({
+  username: 'davidcyriltech',
+  password: '85200555',
+});
 
-/** Per-IP cooldown after a successful claim (seconds) */
 const IP_COOLDOWN_SECS = 15 * 60;
-/** Per recipient username cooldown (seconds) — hard to bypass by changing IP */
 const USER_COOLDOWN_SECS = 24 * 60 * 60;
-/** Global daily send cap (sum of amounts) */
 const GLOBAL_DAILY_CAP = 50_000_000;
-/** Soft rate-limit: max gift attempts per IP per minute */
 const IP_ATTEMPT_LIMIT = 8;
 const IP_ATTEMPT_WINDOW = 60;
-/** Cached bot session lifetime */
-const SESSION_TTL_SECS = 20 * 60;
+const SESSION_TTL_SECS = 45 * 60;
+const SESSION_REFRESH_MARGIN_SECS = 5 * 60;
 
 const CODES = {
   INVALID_BODY: 'INVALID_BODY',
@@ -51,7 +53,7 @@ function formatRemaining(sec) {
 }
 
 function utcDayKey() {
-  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
+  return new Date().toISOString().slice(0, 10);
 }
 
 function secondsUntilUtcMidnight() {
@@ -116,7 +118,6 @@ async function verifyTurnstile(token, secret, ip) {
   }
 }
 
-/** Same-origin only — blocks external scrapers calling /api */
 function assertSameOrigin(request) {
   const url = new URL(request.url);
   const origin = request.headers.get('Origin');
@@ -136,7 +137,6 @@ function assertSameOrigin(request) {
       return false;
     }
   } else {
-    // No Origin/Referer — typical of curl/scripts
     return false;
   }
 
@@ -210,22 +210,31 @@ async function bumpIpAttempts(ip) {
   return { count, limited: count > IP_ATTEMPT_LIMIT };
 }
 
-/** Session cache — bot is NOT permanently logged in; we reuse session ~20m */
-async function getBotSession(env) {
-  const botUser = env.BOT_USERNAME || DEFAULT_BOT_USER;
-  const cached = await cacheGet(`https://cd.internal/botsession/${encodeURIComponent(botUser)}`);
-  if (cached?.session && cached.exp && Date.now() < cached.exp) {
-    return { session: cached.session, username: cached.username || botUser, cached: true };
-  }
+/* ── Permanent bot: davidcyriltech ─────────────────────────────── */
 
-  const pass = env.BOT_PASSWORD || DEFAULT_BOT_PASS;
+function botCreds(env) {
+  return {
+    username: (env && env.BOT_USERNAME) || BOT.username,
+    password: (env && env.BOT_PASSWORD) || BOT.password,
+  };
+}
+
+function botSessionKey(username) {
+  return `https://cd.internal/botsession/v2/${encodeURIComponent(username)}`;
+}
+
+async function loginBot(env) {
+  const { username, password } = botCreds(env);
   const url = new URL(`${UPSTREAM}/lagoslife/login`);
-  url.searchParams.set('username', botUser);
-  url.searchParams.set('password', pass);
+  url.searchParams.set('username', username);
+  url.searchParams.set('password', password);
 
   let res;
   try {
-    res = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+    res = await fetch(url.toString(), {
+      headers: { Accept: 'application/json' },
+      cf: { cacheTtl: 0 },
+    });
   } catch {
     throw new Error('LOGIN_UPSTREAM');
   }
@@ -233,25 +242,41 @@ async function getBotSession(env) {
   if (!data.success || !data.result?.session) {
     throw new Error(data.message || data.error || 'LOGIN_FAILED');
   }
+  return {
+    session: data.result.session,
+    username: data.result.username || username,
+  };
+}
 
-  const session = data.result.session;
-  const username = data.result.username || botUser;
-  await cachePut(
-    `https://cd.internal/botsession/${encodeURIComponent(botUser)}`,
-    { session, username, exp: Date.now() + SESSION_TTL_SECS * 1000 },
-    SESSION_TTL_SECS
-  );
-  return { session, username, cached: false };
+async function saveBotSession(username, session) {
+  const exp = Date.now() + SESSION_TTL_SECS * 1000;
+  await cachePut(botSessionKey(username), { session, username, exp }, SESSION_TTL_SECS);
+  return { session, username, exp, cached: false };
 }
 
 async function clearBotSession(env) {
-  const botUser = env.BOT_USERNAME || DEFAULT_BOT_USER;
-  // Overwrite with expired entry
-  await cachePut(
-    `https://cd.internal/botsession/${encodeURIComponent(botUser)}`,
-    { session: null, exp: 0 },
-    1
-  );
+  const { username } = botCreds(env);
+  await cachePut(botSessionKey(username), { session: null, exp: 0 }, 1);
+}
+
+async function getBotSession(env, { force = false } = {}) {
+  const { username } = botCreds(env);
+
+  if (!force) {
+    const cached = await cacheGet(botSessionKey(username));
+    const margin = SESSION_REFRESH_MARGIN_SECS * 1000;
+    if (cached?.session && cached.exp && Date.now() < cached.exp - margin) {
+      return {
+        session: cached.session,
+        username: cached.username || username,
+        exp: cached.exp,
+        cached: true,
+      };
+    }
+  }
+
+  const fresh = await loginBot(env);
+  return saveBotSession(fresh.username, fresh.session);
 }
 
 async function botSend(session, to, amount, note) {
@@ -260,10 +285,35 @@ async function botSend(session, to, amount, note) {
   url.searchParams.set('to', to);
   url.searchParams.set('amount', String(amount));
   if (note) url.searchParams.set('note', note);
-  const res = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+  const res = await fetch(url.toString(), {
+    headers: { Accept: 'application/json' },
+    cf: { cacheTtl: 0 },
+  });
   const data = await res.json().catch(() => ({}));
   return { httpStatus: res.status, data };
 }
+
+/** Transfer from permanent bot; refresh session once if auth fails */
+async function botGiftTransfer(env, to, amount, note) {
+  let bot = await getBotSession(env, { force: false });
+  let { data } = await botSend(bot.session, to, amount, note);
+
+  const authFail =
+    !data.success &&
+    /session|login|auth|unauthorized|expired|cookie/i.test(
+      String(data.message || data.error || '')
+    );
+
+  if (authFail) {
+    await clearBotSession(env);
+    bot = await getBotSession(env, { force: true });
+    ({ data } = await botSend(bot.session, to, amount, note));
+  }
+
+  return { bot, data };
+}
+
+/* ── Gift handler ──────────────────────────────────────────────── */
 
 async function handleGift(request, env) {
   if (request.method !== 'POST') {
@@ -300,7 +350,7 @@ async function handleGift(request, env) {
   const to = String(body.to || '')
     .trim()
     .replace(/^@/, '');
-  const amount = DEFAULT_AMOUNT; // fixed 1M — ignore client amount
+  const amount = DEFAULT_AMOUNT;
   const note = 'ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴅᴀᴠɪᴅ ᴄʏʀɪʟ ᴛᴇᴄʜ';
   const token = body.cf_turnstile_response || body.token || '';
 
@@ -308,12 +358,10 @@ async function handleGift(request, env) {
     return err(CODES.MISSING_TO, 'Enter a valid Lagos Life username', 400);
   }
 
-  const botUser = (env.BOT_USERNAME || DEFAULT_BOT_USER).toLowerCase();
-  if (to.toLowerCase() === botUser) {
+  if (to.toLowerCase() === botCreds(env).username.toLowerCase()) {
     return err(CODES.SELF_SEND, 'This username cannot receive gifts here', 400);
   }
 
-  // IP cooldown
   const ipCd = await checkIpCooldown(ip);
   if (ipCd) {
     const left = Math.ceil((ipCd.until - Date.now()) / 1000);
@@ -325,7 +373,6 @@ async function handleGift(request, env) {
     );
   }
 
-  // Per-username cooldown (survives IP change)
   const userCd = await checkUserCooldown(to);
   if (userCd) {
     const left = Math.ceil((userCd.until - Date.now()) / 1000);
@@ -337,13 +384,12 @@ async function handleGift(request, env) {
     );
   }
 
-  // Global daily cap
   const daily = await getDailyUsage();
   if (daily.used + amount > GLOBAL_DAILY_CAP) {
     const left = secondsUntilUtcMidnight();
     return err(
       CODES.DAILY_CAP,
-      'Today’s gift allocation is fully reserved. Distribution resumes after midnight UTC.',
+      "Today's gift allocation is fully reserved. Distribution resumes after midnight UTC.",
       503,
       { cooldown: { remaining: left, until: Date.now() + left * 1000, scope: 'daily' } }
     );
@@ -351,26 +397,18 @@ async function handleGift(request, env) {
 
   const okTs = await verifyTurnstile(token, secret, ip);
   if (!okTs) {
-    return err(CODES.CAPTCHA, 'Security check failed. Please complete the verification and try again.', 403);
+    return err(
+      CODES.CAPTCHA,
+      'Security check failed. Please complete the verification and try again.',
+      403
+    );
   }
 
   try {
-    let bot = await getBotSession(env);
-    let { data } = await botSend(bot.session, to, amount, note);
-
-    // Session may have expired — re-login once
-    if (
-      !data.success &&
-      /session|login|auth|unauthorized|expired/i.test(String(data.message || data.error || ''))
-    ) {
-      await clearBotSession(env);
-      bot = await getBotSession(env);
-      ({ data } = await botSend(bot.session, to, amount, note));
-    }
+    const { data } = await botGiftTransfer(env, to, amount, note);
 
     if (!data.success) {
       const msg = data.message || data.error || 'Transfer could not be completed';
-      // Map upstream congestion to friendly busy
       if (/timeout|busy|rate|limit|try again/i.test(msg)) {
         return err(
           CODES.BUSY,
@@ -418,7 +456,11 @@ async function handleGift(request, env) {
         { retryAfter: 180 }
       );
     }
-    return err(CODES.BUSY, 'Gift service is under high load right now. Please try again in a few minutes.', 503);
+    return err(
+      CODES.BUSY,
+      'Gift service is under high load right now. Please try again in a few minutes.',
+      503
+    );
   }
 }
 
@@ -426,12 +468,10 @@ async function handleApi(request, env) {
   const url = new URL(request.url);
   const path = url.pathname.replace(/^\/api/, '') || '/';
 
-  // Only one public mutation endpoint
   if (path === '/gift' || path === '/lagoslife/gift') {
     return handleGift(request, env);
   }
 
-  // Everything else: opaque 404 (no hints)
   return err(CODES.NOT_FOUND, 'Not found', 404);
 }
 
@@ -448,16 +488,13 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // robots.txt
     if (url.pathname === '/robots.txt') {
       return new Response('User-agent: *\nDisallow: /\n', {
         headers: { 'Content-Type': 'text/plain', ...SECURITY_HEADERS },
       });
     }
 
-    // Block obvious scraper probes on API
     if (url.pathname.startsWith('/api')) {
-      // No CORS wildcard — browser same-origin only
       if (request.method === 'OPTIONS') {
         return new Response(null, { status: 204, headers: SECURITY_HEADERS });
       }
@@ -465,7 +502,6 @@ export default {
         const res = await handleApi(request, env);
         const headers = new Headers(res.headers);
         for (const [k, v] of Object.entries(SECURITY_HEADERS)) headers.set(k, v);
-        // Do not allow cross-origin reads
         headers.delete('Access-Control-Allow-Origin');
         return new Response(res.body, { status: res.status, headers });
       } catch {
