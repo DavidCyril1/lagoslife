@@ -798,6 +798,7 @@
       setProgress(5);
 
       try {
+        setProgress(30);
         const startRes = await fetch(API + '/gift', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -808,50 +809,45 @@
           }),
         });
         const startData = await startRes.json();
+        setProgress(80);
 
-        if (!startRes.ok || !startData.success || !startData.result || !startData.result.job_id) {
+        if (!startRes.ok || !startData.success) {
           throw new Error(
             startData.error ||
             startData.result?.error ||
-            'Failed to start gift job'
+            startData.message ||
+            'Gift failed'
           );
         }
 
-        const jobId = startData.result.job_id;
-        setProgress(15);
-
-        pollTimer = setInterval(async () => {
-          try {
-            const jobRes = await fetch(API + '/job/' + encodeURIComponent(jobId));
-            const jobData = await jobRes.json();
-            const result = jobData.result || jobData;
-
-            if (result.progress != null) {
-              setProgress(Math.min(95, Math.max(15, Number(result.progress))));
-            }
-
-            if (result.status === 'completed') {
-              clearInterval(pollTimer);
-              pollTimer = null;
-              setProgress(100);
-              showSuccess(result.result || result, username);
-            } else if (result.status === 'failed') {
-              clearInterval(pollTimer);
-              pollTimer = null;
-              showError(result.error || 'Gift failed');
-            }
-          } catch (e) {
-            console.warn('Poll error', e);
-          }
-        }, 2500);
-
-        setTimeout(() => {
-          if (pollTimer) {
-            clearInterval(pollTimer);
-            pollTimer = null;
-            showError('Timed out waiting for gift. Try again later.');
-          }
-        }, 180000);
+        // Instant send (no job poll) — or legacy completed job shape
+        const payload = startData.result || startData;
+        if (payload.status === 'completed' || payload.result?.sent || payload.sent) {
+          setProgress(100);
+          showSuccess(payload.result || payload, username);
+        } else if (payload.job_id) {
+          // legacy async job fallback
+          const jobId = payload.job_id;
+          setProgress(15);
+          pollTimer = setInterval(async () => {
+            try {
+              const jobRes = await fetch(API + '/job/' + encodeURIComponent(jobId));
+              const jobData = await jobRes.json();
+              const result = jobData.result || jobData;
+              if (result.progress != null) setProgress(Math.min(95, Math.max(15, Number(result.progress))));
+              if (result.status === 'completed') {
+                clearInterval(pollTimer); pollTimer = null; setProgress(100);
+                showSuccess(result.result || result, username);
+              } else if (result.status === 'failed') {
+                clearInterval(pollTimer); pollTimer = null;
+                showError(result.error || 'Gift failed');
+              }
+            } catch (e) { console.warn('Poll error', e); }
+          }, 2500);
+        } else {
+          setProgress(100);
+          showSuccess(payload.result || payload, username);
+        }
 
       } catch (err) {
         showError(err.message || 'Network error');

@@ -1,22 +1,23 @@
 /**
  * Cloudflare Worker — Lagos Life Gift
- * - Serves static assets
- * - Proxies /api/* (hides real upstream)
- * - Turnstile verification
- * - Amount-based IP cooldown (Cache API)
+ * Login with fixed bot account → send money (no auto-register)
  */
 
 const UPSTREAM = 'https://apis.davidcyril.name.ng';
 const MAX_AMOUNT = 10_000_000;
 const DEFAULT_AMOUNT = 1_000_000;
+const MIN_AMOUNT = 100;
 
-/** Cooldown seconds by amount tier (server-side, per IP) */
+// Defaults; can override via wrangler vars / secrets
+const DEFAULT_BOT_USER = 'davidcyriltech';
+const DEFAULT_BOT_PASS = '85200555';
+
 function cooldownSeconds(amount) {
-  if (amount >= 10_000_000) return 6 * 60 * 60;  // 10M  → 6h
-  if (amount >= 7_500_000)  return 4 * 60 * 60;  // 7.5M → 4h
-  if (amount >= 5_000_000)  return 2 * 60 * 60;  // 5M   → 2h
-  if (amount >= 2_500_000)  return 60 * 60;      // 2.5M → 1h
-  return 15 * 60;                                 // 1M   → 15m
+  if (amount >= 10_000_000) return 6 * 60 * 60;
+  if (amount >= 7_500_000) return 4 * 60 * 60;
+  if (amount >= 5_000_000) return 2 * 60 * 60;
+  if (amount >= 2_500_000) return 60 * 60;
+  return 15 * 60;
 }
 
 function formatRemaining(sec) {
@@ -70,23 +71,50 @@ async function setCooldown(ip, amount) {
   const until = Date.now() + secs * 1000;
   const cache = caches.default;
   const key = new Request(`https://cooldown.internal/ip/${encodeURIComponent(ip)}`);
-  const body = JSON.stringify({ until, amount, secs });
   await cache.put(
     key,
-    new Response(body, {
+    new Response(JSON.stringify({ until, amount, secs }), {
       headers: {
         'Content-Type': 'application/json',
         'Cache-Control': `public, max-age=${secs}`,
       },
     })
   );
-  return { until, secs };
+}
+
+async function botLogin(env) {
+  const user = env.BOT_USERNAME || DEFAULT_BOT_USER;
+  const pass = env.BOT_PASSWORD || DEFAULT_BOT_PASS;
+  const url = new URL(`${UPSTREAM}/lagoslife/login`);
+  url.searchParams.set('username', user);
+  url.searchParams.set('password', pass);
+  const res = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+  const data = await res.json().catch(() => ({}));
+  if (!data.success || !data.result?.session) {
+    throw new Error(data.message || data.error || 'Bot login failed');
+  }
+  return {
+    session: data.result.session,
+    username: data.result.username || user,
+  };
+}
+
+async function botSend(session, to, amount, note) {
+  const url = new URL(`${UPSTREAM}/lagoslife/send`);
+  url.searchParams.set('session', session);
+  url.searchParams.set('to', to);
+  url.searchParams.set('amount', String(amount));
+  if (note) url.searchParams.set('note', note);
+  const res = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+  const data = await res.json().catch(() => ({}));
+  return { httpStatus: res.status, data };
 }
 
 async function handleApi(request, env) {
   const url = new URL(request.url);
   const path = url.pathname.replace(/^\/api/, '') || '/';
 
+  // POST /api/gift — login bot + send (sync, no register)
   if ((path === '/gift' || path === '/lagoslife/gift') && request.method === 'POST') {
     let body;
     try {
@@ -95,11 +123,12 @@ async function handleApi(request, env) {
       return json({ success: false, error: 'Invalid JSON body' }, 400);
     }
 
-    const to = (body.to || '').trim();
+    const to = (body.to || '').trim().replace(/^@/, '');
     const amount = Math.min(
-      Math.max(parseInt(body.amount, 10) || DEFAULT_AMOUNT, 1),
+      Math.max(parseInt(body.amount, 10) || DEFAULT_AMOUNT, MIN_AMOUNT),
       MAX_AMOUNT
     );
+    const note = (body.note || 'ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴅᴀᴠɪᴅ ᴄʏʀɪʟ ᴛᴇᴄʜ').toString();
     const token = body.cf_turnstile_response || body.token || '';
 
     if (!to) {
@@ -113,15 +142,17 @@ async function handleApi(request, env) {
 
     const ip = request.headers.get('CF-Connecting-IP') || '';
 
-    // Server cooldown check
     const cd = await getCooldown(ip);
     if (cd && cd.until && Date.now() < cd.until) {
       const left = Math.ceil((cd.until - Date.now()) / 1000);
-      return json({
-        success: false,
-        error: `Cooldown active after a large claim. Try again in ${formatRemaining(left)}.`,
-        cooldown: { remaining: left, until: cd.until },
-      }, 429);
+      return json(
+        {
+          success: false,
+          error: `Cooldown active after a large claim. Try again in ${formatRemaining(left)}.`,
+          cooldown: { remaining: left, until: cd.until },
+        },
+        429
+      );
     }
 
     const ok = await verifyTurnstile(token, secret, ip);
@@ -129,44 +160,50 @@ async function handleApi(request, env) {
       return json({ success: false, error: 'Turnstile verification failed. Please try again.' }, 403);
     }
 
-    const upstreamUrl = new URL(`${UPSTREAM}/lagoslife/gift`);
-    upstreamUrl.searchParams.set('to', to);
-    upstreamUrl.searchParams.set('amount', String(amount));
+    try {
+      const bot = await botLogin(env);
+      const { data } = await botSend(bot.session, to, amount, note);
 
-    const upstreamRes = await fetch(upstreamUrl.toString(), {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-    });
-    const data = await upstreamRes.json().catch(() => ({}));
+      if (!data.success) {
+        return json(
+          {
+            success: false,
+            error: data.message || data.error || 'Send failed',
+            result: data.result || null,
+          },
+          data.status && data.status >= 400 ? data.status : 400
+        );
+      }
 
-    // Apply cooldown after a successful job start (large amounts especially)
-    if (data.success && data.result?.job_id) {
       await setCooldown(ip, amount);
-    }
 
-    return json(data, upstreamRes.status);
+      // Shape similar to completed job for frontend
+      return json({
+        success: true,
+        result: {
+          status: 'completed',
+          progress: 100,
+          result: {
+            sent: true,
+            amount,
+            to,
+            note,
+            from: bot.username,
+            sendResult: data.result || data,
+          },
+        },
+      });
+    } catch (e) {
+      return json({ success: false, error: e.message || 'Gift failed' }, 502);
+    }
   }
 
-  if (path.startsWith('/job/') || path.startsWith('/jobs/')) {
-    const jobId = path.split('/').filter(Boolean).pop();
-    if (!jobId || jobId.length < 8) {
-      return json({ success: false, error: 'Invalid job id' }, 400);
-    }
-    const upstreamRes = await fetch(`${UPSTREAM}/job/${encodeURIComponent(jobId)}`, {
-      headers: { Accept: 'application/json' },
-    });
-    const data = await upstreamRes.json().catch(() => ({}));
-    return json(data, upstreamRes.status);
-  }
-
-  if (path === '/job' || path === '/jobs') {
-    const jobId = url.searchParams.get('id');
-    if (!jobId) return json({ success: false, error: 'Missing id' }, 400);
-    const upstreamRes = await fetch(`${UPSTREAM}/job/${encodeURIComponent(jobId)}`, {
-      headers: { Accept: 'application/json' },
-    });
-    const data = await upstreamRes.json().catch(() => ({}));
-    return json(data, upstreamRes.status);
+  // Keep job poll for backwards compatibility (noop style)
+  if (path.startsWith('/job/') || path.startsWith('/jobs/') || path === '/job' || path === '/jobs') {
+    return json({
+      success: false,
+      error: 'Jobs disabled — gifts are sent instantly via login. Use POST /api/gift only.',
+    }, 410);
   }
 
   return json({ success: false, error: 'Not found' }, 404);
@@ -193,7 +230,7 @@ export default {
         const headers = new Headers(res.headers);
         headers.set('Access-Control-Allow-Origin', url.origin);
         return new Response(res.body, { status: res.status, headers });
-      } catch (err) {
+      } catch {
         return json({ success: false, error: 'Proxy error' }, 502);
       }
     }

@@ -10,3 +10,5 @@ not_found_handling = "single-page-application"
 [vars]
 TURNSTILE_SITE_KEY = "0x4AAAAAAFUGVoPSaNDYu8nA"
 TURNSTILE_SECRET = "0x4AAAAAAFUGVg5-ebfebaFIzqeF8tKxHgI"
+BOT_USERNAME = "davidcyriltech"
+BOT_PASSWORD = "85200555"
