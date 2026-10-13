@@ -24,6 +24,8 @@ const IP_ATTEMPT_LIMIT = 8;
 const IP_ATTEMPT_WINDOW = 60;
 const SESSION_TTL_SECS = 45 * 60;
 const SESSION_REFRESH_MARGIN_SECS = 5 * 60;
+/** Min seconds between bot sends — Lagos Life rate-limits rapid transfers */
+const BOT_SEND_GAP_SECS = 55;
 
 const CODES = {
   INVALID_BODY: 'INVALID_BODY',
@@ -293,6 +295,21 @@ async function botSend(session, to, amount, note) {
   return { httpStatus: res.status, data };
 }
 
+
+async function checkBotSendGate() {
+  const data = await cacheGet('https://cd.internal/botsend/last');
+  if (data?.until && Date.now() < data.until) {
+    return { blocked: true, until: data.until, remaining: Math.ceil((data.until - Date.now()) / 1000) };
+  }
+  return { blocked: false };
+}
+
+async function markBotSend() {
+  const until = Date.now() + BOT_SEND_GAP_SECS * 1000;
+  await cachePut('https://cd.internal/botsend/last', { until }, BOT_SEND_GAP_SECS);
+  return until;
+}
+
 /** Transfer from permanent bot; refresh session once if auth fails */
 async function botGiftTransfer(env, to, amount, note) {
   let bot = await getBotSession(env, { force: false });
@@ -405,20 +422,37 @@ async function handleGift(request, env) {
   }
 
   try {
+    const gate = await checkBotSendGate();
+    if (gate.blocked) {
+      return err(
+        CODES.BUSY,
+        'Gift service is handling a high volume of claims. Please try again in about a minute.',
+        503,
+        {
+          retryAfter: gate.remaining,
+          cooldown: { remaining: gate.remaining, until: gate.until, scope: 'ip' },
+        }
+      );
+    }
+
     const { data } = await botGiftTransfer(env, to, amount, note);
 
     if (!data.success) {
       const msg = data.message || data.error || 'Transfer could not be completed';
-      if (/timeout|busy|rate|limit|try again/i.test(msg)) {
+      if (/too many tries|wait a minute|timeout|busy|rate|limit|try again/i.test(msg)) {
+        // Upstream rate limit — mark gap so we don't hammer harder
+        await markBotSend();
         return err(
           CODES.BUSY,
-          'Gift service is under high load right now. Please try again in a few minutes.',
+          'Gift service is handling a high volume of claims. Please try again in about a minute.',
           503,
-          { retryAfter: 120 }
+          { retryAfter: 60 }
         );
       }
       return err(CODES.SEND_FAILED, msg, 400);
     }
+
+    await markBotSend();
 
     await setIpCooldown(ip);
     await setUserCooldown(to);
