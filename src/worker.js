@@ -4,7 +4,7 @@
  * Permanent backend bot: davidcyriltech
  *   login → cache session (~45m) → send 1M → auto re-login on expiry
  *
- * Strict same-origin API · IP + username cooldowns · 50M daily cap
+ * Strict API · global 60s race window · 50M daily cap
  */
 
 const UPSTREAM = 'https://apis.davidcyril.name.ng';
@@ -17,15 +17,13 @@ const BOT = Object.freeze({
   password: '85200555',
 });
 
-const IP_COOLDOWN_SECS = 15 * 60;
-const USER_COOLDOWN_SECS = 24 * 60 * 60;
+/** Global race: only ONE successful claim site-wide every 60 seconds */
+const GLOBAL_CLAIM_GAP_SECS = 60;
 const GLOBAL_DAILY_CAP = 50_000_000;
-const IP_ATTEMPT_LIMIT = 8;
+const IP_ATTEMPT_LIMIT = 12;
 const IP_ATTEMPT_WINDOW = 60;
 const SESSION_TTL_SECS = 45 * 60;
 const SESSION_REFRESH_MARGIN_SECS = 5 * 60;
-/** Min seconds between bot sends — Lagos Life rate-limits rapid transfers */
-const BOT_SEND_GAP_SECS = 55;
 
 const CODES = {
   INVALID_BODY: 'INVALID_BODY',
@@ -33,8 +31,7 @@ const CODES = {
   SELF_SEND: 'SELF_SEND',
   FORBIDDEN: 'FORBIDDEN',
   CAPTCHA: 'CAPTCHA',
-  COOLDOWN_IP: 'COOLDOWN_IP',
-  COOLDOWN_USER: 'COOLDOWN_USER',
+  RACE_WAIT: 'RACE_WAIT',
   DAILY_CAP: 'DAILY_CAP',
   RATE_LIMIT: 'RATE_LIMIT',
   BUSY: 'BUSY',
@@ -151,34 +148,25 @@ function assertSameOrigin(request) {
   return true;
 }
 
-async function checkIpCooldown(ip) {
-  if (!ip) return null;
-  const data = await cacheGet(`https://cd.internal/ip/${encodeURIComponent(ip)}`);
-  if (data?.until && Date.now() < data.until) return data;
-  return null;
+const RACE_KEY = 'https://cd.internal/race/next';
+
+async function getRaceState() {
+  const data = await cacheGet(RACE_KEY);
+  if (data?.until && Date.now() < data.until) {
+    const remaining = Math.ceil((data.until - Date.now()) / 1000);
+    return { open: false, until: data.until, remaining, lastTo: data.lastTo || null };
+  }
+  return { open: true, until: null, remaining: 0, lastTo: data?.lastTo || null };
 }
 
-async function setIpCooldown(ip) {
-  if (!ip) return null;
-  const secs = IP_COOLDOWN_SECS;
-  const until = Date.now() + secs * 1000;
-  await cachePut(`https://cd.internal/ip/${encodeURIComponent(ip)}`, { until, secs }, secs);
-  return { until, secs };
-}
-
-async function checkUserCooldown(username) {
-  const key = username.toLowerCase();
-  const data = await cacheGet(`https://cd.internal/user/${encodeURIComponent(key)}`);
-  if (data?.until && Date.now() < data.until) return data;
-  return null;
-}
-
-async function setUserCooldown(username) {
-  const key = username.toLowerCase();
-  const secs = USER_COOLDOWN_SECS;
-  const until = Date.now() + secs * 1000;
-  await cachePut(`https://cd.internal/user/${encodeURIComponent(key)}`, { until, secs }, secs);
-  return { until, secs };
+async function lockRace(lastTo) {
+  const until = Date.now() + GLOBAL_CLAIM_GAP_SECS * 1000;
+  await cachePut(
+    RACE_KEY,
+    { until, lastTo: lastTo || null, lockedAt: Date.now() },
+    GLOBAL_CLAIM_GAP_SECS + 5
+  );
+  return { until, remaining: GLOBAL_CLAIM_GAP_SECS };
 }
 
 async function getDailyUsage() {
@@ -296,19 +284,6 @@ async function botSend(session, to, amount, note) {
 }
 
 
-async function checkBotSendGate() {
-  const data = await cacheGet('https://cd.internal/botsend/last');
-  if (data?.until && Date.now() < data.until) {
-    return { blocked: true, until: data.until, remaining: Math.ceil((data.until - Date.now()) / 1000) };
-  }
-  return { blocked: false };
-}
-
-async function markBotSend() {
-  const until = Date.now() + BOT_SEND_GAP_SECS * 1000;
-  await cachePut('https://cd.internal/botsend/last', { until }, BOT_SEND_GAP_SECS);
-  return until;
-}
 
 /** Transfer from permanent bot; refresh session once if auth fails */
 async function botGiftTransfer(env, to, amount, note) {
@@ -379,25 +354,17 @@ async function handleGift(request, env) {
     return err(CODES.SELF_SEND, 'This username cannot receive gifts here', 400);
   }
 
-  const ipCd = await checkIpCooldown(ip);
-  if (ipCd) {
-    const left = Math.ceil((ipCd.until - Date.now()) / 1000);
+  // Global 1-minute race window
+  const race = await getRaceState();
+  if (!race.open) {
     return err(
-      CODES.COOLDOWN_IP,
-      `Please wait before claiming again. Available in ${formatRemaining(left)}.`,
+      CODES.RACE_WAIT,
+      `Someone just claimed. Next open window in ${formatRemaining(race.remaining)} — be ready.`,
       429,
-      { cooldown: { remaining: left, until: ipCd.until, scope: 'ip' } }
-    );
-  }
-
-  const userCd = await checkUserCooldown(to);
-  if (userCd) {
-    const left = Math.ceil((userCd.until - Date.now()) / 1000);
-    return err(
-      CODES.COOLDOWN_USER,
-      `This account already claimed recently. Next claim available in ${formatRemaining(left)}.`,
-      429,
-      { cooldown: { remaining: left, until: userCd.until, scope: 'user' } }
+      {
+        race: { open: false, remaining: race.remaining, until: race.until },
+        cooldown: { remaining: race.remaining, until: race.until, scope: 'race' },
+      }
     );
   }
 
@@ -422,15 +389,16 @@ async function handleGift(request, env) {
   }
 
   try {
-    const gate = await checkBotSendGate();
-    if (gate.blocked) {
+    // Double-check race right before send (reduce double-claim races)
+    const race2 = await getRaceState();
+    if (!race2.open) {
       return err(
-        CODES.BUSY,
-        'Gift service is handling a high volume of claims. Please try again in about a minute.',
-        503,
+        CODES.RACE_WAIT,
+        `Someone was faster. Next window in ${formatRemaining(race2.remaining)}.`,
+        429,
         {
-          retryAfter: gate.remaining,
-          cooldown: { remaining: gate.remaining, until: gate.until, scope: 'ip' },
+          race: { open: false, remaining: race2.remaining, until: race2.until },
+          cooldown: { remaining: race2.remaining, until: race2.until, scope: 'race' },
         }
       );
     }
@@ -440,26 +408,23 @@ async function handleGift(request, env) {
     if (!data.success) {
       const msg = data.message || data.error || 'Transfer could not be completed';
       if (/too many tries|wait a minute|timeout|busy|rate|limit|try again/i.test(msg)) {
-        // Upstream rate limit — mark gap so we don't hammer harder
-        await markBotSend();
+        const locked = await lockRace(null);
         return err(
           CODES.BUSY,
-          'Gift service is handling a high volume of claims. Please try again in about a minute.',
+          'Gift lane is cooling down. Next window opens in about a minute — stay ready.',
           503,
-          { retryAfter: 60 }
+          {
+            retryAfter: locked.remaining,
+            race: { open: false, remaining: locked.remaining, until: locked.until },
+            cooldown: { remaining: locked.remaining, until: locked.until, scope: 'race' },
+          }
         );
       }
       return err(CODES.SEND_FAILED, msg, 400);
     }
 
-    await markBotSend();
-
-    await setIpCooldown(ip);
-    await setUserCooldown(to);
+    const locked = await lockRace(to);
     await addDailyUsage(amount);
-
-    const ipUntil = Date.now() + IP_COOLDOWN_SECS * 1000;
-    const userUntil = Date.now() + USER_COOLDOWN_SECS * 1000;
 
     return apiJson({
       success: true,
@@ -473,11 +438,11 @@ async function handleGift(request, env) {
           to,
         },
       },
+      race: { open: false, remaining: locked.remaining, until: locked.until },
       cooldown: {
-        remaining: IP_COOLDOWN_SECS,
-        until: ipUntil,
-        userUntil,
-        scope: 'ip',
+        remaining: locked.remaining,
+        until: locked.until,
+        scope: 'race',
       },
     });
   } catch (e) {
@@ -498,9 +463,37 @@ async function handleGift(request, env) {
   }
 }
 
+async function handleRaceStatus(request) {
+  // Lightweight public timer — same-origin preferred, but allow GET for the race UI
+  const race = await getRaceState();
+  const daily = await getDailyUsage();
+  const soldOut = daily.used + DEFAULT_AMOUNT > GLOBAL_DAILY_CAP;
+  return apiJson({
+    success: true,
+    code: 'OK',
+    race: {
+      open: race.open && !soldOut,
+      remaining: race.remaining,
+      until: race.until,
+      gapSeconds: GLOBAL_CLAIM_GAP_SECS,
+    },
+    daily: {
+      soldOut,
+      resetsIn: soldOut ? secondsUntilUtcMidnight() : null,
+    },
+  });
+}
+
 async function handleApi(request, env) {
   const url = new URL(request.url);
   const path = url.pathname.replace(/^\/api/, '') || '/';
+
+  if (path === '/race' || path === '/next') {
+    if (request.method !== 'GET') {
+      return err(CODES.FORBIDDEN, 'Method not allowed', 405);
+    }
+    return handleRaceStatus(request);
+  }
 
   if (path === '/gift' || path === '/lagoslife/gift') {
     return handleGift(request, env);

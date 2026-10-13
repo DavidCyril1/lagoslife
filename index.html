@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Lagos Life Gift</title>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎁</text></svg>">
+<link rel="icon" href="https://i.pinimg.com/736x/ca/1f/fb/ca1ffbe66f8f41803fcd5474fe360616.jpg" type="image">
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
   <style>
@@ -653,15 +653,54 @@
     @media (min-width: 768px) {
       body { padding-top: 48px; }
     }
+
+    .race-panel {
+      margin: 0 auto 1rem;
+      max-width: 480px;
+      padding: 1.1rem 1rem;
+      background: var(--blue, #3a5cff);
+      color: #fff;
+      border: 3px solid var(--black);
+      box-shadow: var(--shadow);
+      text-align: center;
+    }
+    .race-panel.open {
+      background: var(--green, #00c566);
+      color: var(--black);
+    }
+    .race-panel .race-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 0.25rem;
+    }
+    .race-panel .race-timer {
+      font-size: clamp(1.6rem, 9vw, 2.4rem);
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.05em;
+    }
+    .race-panel .race-hint {
+      margin-top: 0.35rem;
+      font-size: 0.85rem;
+      opacity: 0.95;
+    }
   </style>
 </head>
 <body>
   <div class="header">
     <div class="badge">🎁 Free Gift</div>
     <h1>Lagos Life Gift</h1>
-    <p>Claim <strong>1,000,000</strong> in-game cash</p>
+    <p>Claim <strong>1,000,000</strong> — one winner every 60 seconds. Be fast.</p>
   </div>
 
+
+  <div class="race-panel" id="racePanel" aria-live="polite">
+    <div class="race-label" id="raceLabel">Next claim window</div>
+    <div class="race-timer" id="raceTimer">--:--</div>
+    <div class="race-hint" id="raceHint">Loading…</div>
+  </div>
   <div class="wrapper">
     
     <div class="yt-gate" id="ytGate">
@@ -760,6 +799,73 @@
       'Content-Type': 'application/json',
       'X-Requested-With': 'lagoslife-gift',
     };
+
+    let racePoll = null;
+    let raceUntil = null;
+
+    function formatRace(ms) {
+      const sec = Math.max(0, Math.ceil(ms / 1000));
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+    }
+
+    function renderRaceUI(state) {
+      const panel = document.getElementById('racePanel');
+      const timer = document.getElementById('raceTimer');
+      const label = document.getElementById('raceLabel');
+      const hint = document.getElementById('raceHint');
+      if (!panel) return;
+
+      if (state && state.daily && state.daily.soldOut) {
+        panel.classList.remove('open');
+        label.textContent = 'Sold out today';
+        timer.textContent = formatHMS((state.daily.resetsIn || 0) * 1000);
+        hint.textContent = 'Resets at midnight UTC';
+        return;
+      }
+
+      const open = state && state.race && state.race.open;
+      if (open) {
+        panel.classList.add('open');
+        label.textContent = 'Window OPEN';
+        timer.textContent = 'GO';
+        hint.textContent = 'Claim now — first successful gift wins this minute';
+        raceUntil = null;
+      } else {
+        panel.classList.remove('open');
+        label.textContent = 'Next window in';
+        const until = state && state.race && state.race.until;
+        raceUntil = until || raceUntil;
+        const left = raceUntil ? raceUntil - Date.now() : ((state && state.race && state.race.remaining) || 0) * 1000;
+        timer.textContent = formatRace(left);
+        hint.textContent = 'Be ready — only one claim every 60 seconds';
+      }
+      updateGiftBtn();
+    }
+
+    async function refreshRace() {
+      try {
+        const res = await fetch(API + '/race', { method: 'GET', cache: 'no-store' });
+        const data = await res.json();
+        if (data && data.success) renderRaceUI(data);
+      } catch (_) {}
+    }
+
+    function tickRaceLocal() {
+      if (!raceUntil) return;
+      const left = raceUntil - Date.now();
+      if (left <= 0) {
+        raceUntil = null;
+        refreshRace();
+        return;
+      }
+      const timer = document.getElementById('raceTimer');
+      const panel = document.getElementById('racePanel');
+      if (timer) timer.textContent = formatRace(left);
+      if (panel) panel.classList.remove('open');
+    }
+
     const MAX_AMOUNT = 1000000;
     let selectedAmount = 1000000;
     let turnstileToken = null;
@@ -1063,11 +1169,13 @@
           if (startData.code === 'DAILY_CAP' || (startData.cooldown && startData.cooldown.scope === 'daily')) {
             const until = (startData.cooldown && startData.cooldown.until) || (Date.now() + msUntilUtcMidnight());
             activateSoldOut(until);
-          } else if (startData.cooldown && startData.cooldown.until) {
-            setLocalCooldownFromServer({
-              ...startData.cooldown,
-              reason: startData.error,
-            });
+          } else if (startData.code === 'RACE_WAIT' || (startData.race && startData.race.until) || (startData.cooldown && startData.cooldown.scope === 'race')) {
+            const until = (startData.race && startData.race.until) || (startData.cooldown && startData.cooldown.until);
+            if (until) {
+              raceUntil = until;
+              renderRaceUI({ race: { open: false, until, remaining: Math.ceil((until - Date.now()) / 1000) } });
+            }
+            refreshRace();
           }
           const msg = startData.error || startData.message || 'Gift failed';
           const err = new Error(msg);
@@ -1076,9 +1184,12 @@
           throw err;
         }
 
-        if (startData.cooldown) {
-          setLocalCooldownFromServer(startData.cooldown);
+        if (startData.race && startData.race.until) {
+          raceUntil = startData.race.until;
+          renderRaceUI({ race: { open: false, until: raceUntil, remaining: startData.race.remaining } });
         }
+        refreshRace();
+
 
         // Instant send (no job poll) — or legacy completed job shape
         const payload = startData.result || startData;
@@ -1180,9 +1291,11 @@
       if (e.key === 'Enter') startGift();
     });
 
-    // Resume live cooldown / sold-out state
+    // Race timer + sold-out
     clearSoldOutIfExpired();
-    startLiveTimer();
+    refreshRace();
+    setInterval(refreshRace, 5000);
+    setInterval(tickRaceLocal, 250);
     updateGiftBtn();
 
     // Light anti-scrape: no context menu on form (does not stop determined scrapers)
