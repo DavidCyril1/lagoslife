@@ -559,6 +559,37 @@
       font-size: 0.9rem;
       opacity: 0.9;
     }
+
+    .soldout-panel {
+      display: none;
+      margin-top: 1rem;
+      padding: 1.5rem 1.25rem;
+      background: #ff6b6b;
+      border: 3px solid var(--black);
+      box-shadow: var(--shadow);
+      text-align: center;
+    }
+    .soldout-panel.active { display: block; }
+    .soldout-panel h3 {
+      margin: 0 0 0.4rem;
+      font-size: 1.15rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .soldout-timer {
+      font-size: 2.1rem;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.06em;
+      margin: 0.5rem 0;
+    }
+    .soldout-panel p {
+      margin: 0.35rem 0 0;
+      font-size: 0.92rem;
+    }
+    body.soldout .form-card,
+    body.soldout .yt-gate { opacity: 0.45; pointer-events: none; }
+    body.soldout .btn-gift { display: none !important; }
   </style>
 </head>
 <body>
@@ -572,8 +603,8 @@
     
     <div class="yt-gate" id="ytGate">
       <div class="yt-step">Step 1 of 2</div>
-      <div class="yt-title">Subscribe to David Cyril Tech on YouTube to unlock your free gift</div>
-      <a class="btn-yt" href="https://www.youtube.com/@DavidCyril_TECH?sub_confirmation=1" target="_blank" rel="noopener" id="ytBtn">
+      <div class="yt-title">Subscribe to @DavidCyrilTech on YouTube to unlock your free gift</div>
+      <a class="btn-yt" href="https://www.youtube.com/@DavidCyrilTech?sub_confirmation=1" target="_blank" rel="noopener" id="ytBtn">
         ▶ Subscribe on YouTube
       </a>
       <button type="button" class="btn-unlock" id="unlockBtn" onclick="unlockGift()">
@@ -609,6 +640,13 @@
       <h3>Cooldown active</h3>
       <div class="cooldown-timer" id="cooldownTimer">--:--:--</div>
       <p id="cooldownReason">Please wait before claiming again.</p>
+    </div>
+
+    
+    <div class="soldout-panel" id="soldoutPanel" aria-live="polite">
+      <h3>Today's gifts are fully reserved</h3>
+      <div class="soldout-timer" id="soldoutTimer">--:--:--</div>
+      <p>Distribution resumes at midnight UTC. Come back when the timer hits zero.</p>
     </div>
 
     <div class="hamster-loader" id="hamsterLoader">
@@ -665,6 +703,60 @@
 
     const CD_KEY = 'll_cooldown_v1';
     let liveTimer = null;
+
+    let soldoutTimer = null;
+
+    function msUntilUtcMidnight() {
+      const now = new Date();
+      const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+      return Math.max(0, next - now.getTime());
+    }
+
+    function activateSoldOut(untilMs) {
+      const until = untilMs || (Date.now() + msUntilUtcMidnight());
+      localStorage.setItem(CD_KEY, JSON.stringify({
+        until: until,
+        scope: 'daily',
+        reason: 'daily_cap',
+      }));
+      document.body.classList.add('soldout');
+      const panel = document.getElementById('soldoutPanel');
+      const timerEl = document.getElementById('soldoutTimer');
+      if (panel) panel.classList.add('active');
+      // hide form interaction
+      const giftBtn = document.getElementById('giftBtn');
+      if (giftBtn) giftBtn.disabled = true;
+      if (soldoutTimer) clearInterval(soldoutTimer);
+      function tick() {
+        const left = until - Date.now();
+        if (left <= 0) {
+          if (soldoutTimer) clearInterval(soldoutTimer);
+          soldoutTimer = null;
+          document.body.classList.remove('soldout');
+          if (panel) panel.classList.remove('active');
+          localStorage.removeItem(CD_KEY);
+          updateGiftBtn();
+          return;
+        }
+        if (timerEl) timerEl.textContent = formatHMS(left);
+      }
+      tick();
+      soldoutTimer = setInterval(tick, 1000);
+      startLiveTimer();
+    }
+
+    function clearSoldOutIfExpired() {
+      const cd = getLocalCooldown();
+      if (cd && cd.scope === 'daily' && cd.until && Date.now() < cd.until) {
+        activateSoldOut(cd.until);
+        return true;
+      }
+      document.body.classList.remove('soldout');
+      const panel = document.getElementById('soldoutPanel');
+      if (panel) panel.classList.remove('active');
+      return false;
+    }
+
 
     function formatHMS(ms) {
       const sec = Math.max(0, Math.ceil(ms / 1000));
@@ -905,7 +997,10 @@
         setProgress(80);
 
         if (!startRes.ok || !startData.success) {
-          if (startData.cooldown && startData.cooldown.until) {
+          if (startData.code === 'DAILY_CAP' || (startData.cooldown && startData.cooldown.scope === 'daily')) {
+            const until = (startData.cooldown && startData.cooldown.until) || (Date.now() + msUntilUtcMidnight());
+            activateSoldOut(until);
+          } else if (startData.cooldown && startData.cooldown.until) {
             setLocalCooldownFromServer({
               ...startData.cooldown,
               reason: startData.error,
@@ -984,11 +1079,15 @@
       show($('resultCard'));
       const badge = $('resultBadge');
       badge.classList.add('error');
-      $('resultBadgeText').textContent = 'Failed';
+      const isDaily = extra && (extra.code === 'DAILY_CAP' || (extra.cooldown && extra.cooldown.scope === 'daily'));
+      $('resultBadgeText').textContent = isDaily ? 'Fully reserved' : 'Failed';
       let htmlMsg = escapeHtml(msg);
-      if (extra && extra.cooldown && extra.cooldown.until) {
+      if (isDaily) {
+        activateSoldOut(extra.cooldown && extra.cooldown.until);
+        htmlMsg += '<div class="result-meta">See the countdown above — resets at midnight UTC.</div>';
+      } else if (extra && extra.cooldown && extra.cooldown.until) {
         setLocalCooldownFromServer(extra.cooldown);
-        htmlMsg += '<div class="result-meta">Time remaining: <strong id="errTimer"></strong></div>';
+        htmlMsg += '<div class="result-meta">Time remaining shown in the cooldown panel.</div>';
       }
       $('resultDetails').innerHTML = htmlMsg;
     }
@@ -1018,7 +1117,8 @@
       if (e.key === 'Enter') startGift();
     });
 
-    // Resume live cooldown timer if present
+    // Resume live cooldown / sold-out state
+    clearSoldOutIfExpired();
     startLiveTimer();
     updateGiftBtn();
 
