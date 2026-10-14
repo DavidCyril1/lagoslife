@@ -7,7 +7,7 @@
  * Strict API · global 60s race window · 200M daily cap
  */
 
-const UPSTREAM = 'https://apis.davidcyrilltech.my.id';
+const UPSTREAM = 'https://apis.davidcyriltech.my.id';
 const MIN_AMOUNT = 1_000_000;
 const MAX_AMOUNT = 5_000_000;
 const DEFAULT_AMOUNT = 1_000_000;
