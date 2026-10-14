@@ -4,7 +4,7 @@
  * Permanent backend bot: davidcyriltech
  *   login → cache session (~45m) → send 5M → auto re-login on expiry
  *
- * Strict API · global 60s race window · 50M daily cap
+ * Strict API · global 60s race window · 200M daily cap
  */
 
 const UPSTREAM = 'https://apis.davidcyril.name.ng';
@@ -19,7 +19,7 @@ const BOT = Object.freeze({
 
 /** Global race: only ONE successful claim site-wide every 60 seconds */
 const GLOBAL_CLAIM_GAP_SECS = 60;
-const GLOBAL_DAILY_CAP = 50_000_000;
+const GLOBAL_DAILY_CAP = 200_000_000;
 const IP_ATTEMPT_LIMIT = 12;
 const IP_ATTEMPT_WINDOW = 60;
 const SESSION_TTL_SECS = 45 * 60;
