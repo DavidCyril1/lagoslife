@@ -2,14 +2,14 @@
  * Lagos Life Gift Worker
  *
  * Permanent backend bot: davidcyriltech
- *   login → cache session (~45m) → send 1M → auto re-login on expiry
+ *   login → cache session (~45m) → send 5M → auto re-login on expiry
  *
  * Strict API · global 60s race window · 50M daily cap
  */
 
 const UPSTREAM = 'https://apis.davidcyril.name.ng';
-const MAX_AMOUNT = 1_000_000;
-const DEFAULT_AMOUNT = 1_000_000;
+const MAX_AMOUNT = 5_000_000;
+const DEFAULT_AMOUNT = 5_000_000;
 
 /** Permanent gifting bot — server-side only, never exposed to the browser */
 const BOT = Object.freeze({

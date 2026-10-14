@@ -692,7 +692,7 @@
   <div class="header">
     <div class="badge">🎁 Free Gift</div>
     <h1>Lagos Life Gift</h1>
-    <p>Claim <strong>1,000,000</strong> — one winner every 60 seconds. Be fast.</p>
+    <p>Claim <strong>5,000,000</strong> — one winner every 60 seconds. Be fast.</p>
   </div>
 
 
@@ -723,7 +723,7 @@
       <div class="input-group">
         <label>Amount</label>
         <div class="amount-grid" id="amountGrid">
-          <button type="button" class="amount-btn active" data-amount="1000000" style="grid-column: 1 / -1;">1,000,000</button>
+          <button type="button" class="amount-btn active" data-amount="5000000" style="grid-column: 1 / -1;">5,000,000</button>
         </div>
       </div>
 
@@ -866,8 +866,8 @@
       if (panel) panel.classList.remove('open');
     }
 
-    const MAX_AMOUNT = 1000000;
-    let selectedAmount = 1000000;
+    const MAX_AMOUNT = 5000000;
+    let selectedAmount = 5000000;
     let turnstileToken = null;
 
     const CD_KEY = 'll_cooldown_v1';
@@ -1078,7 +1078,7 @@
       btn.addEventListener('click', () => {
         document.querySelectorAll('.amount-btn').forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
-        selectedAmount = Math.min(parseInt(btn.dataset.amount, 10) || 1000000, MAX_AMOUNT);
+        selectedAmount = Math.min(parseInt(btn.dataset.amount, 10) || 5000000, MAX_AMOUNT);
       });
     });
 
