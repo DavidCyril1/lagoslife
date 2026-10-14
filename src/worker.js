@@ -8,8 +8,14 @@
  */
 
 const UPSTREAM = 'https://apis.davidcyril.name.ng';
+const MIN_AMOUNT = 1_000_000;
 const MAX_AMOUNT = 5_000_000;
-const DEFAULT_AMOUNT = 5_000_000;
+const DEFAULT_AMOUNT = 1_000_000;
+/** Lifetime total any one username / IP / device may receive */
+const IDENTITY_CAP = 5_000_000;
+const ALLOWED_AMOUNTS = [1_000_000, 2_000_000, 3_000_000, 4_000_000, 5_000_000];
+/** Keep identity totals ~1 year in edge cache */
+const IDENTITY_TTL_SECS = 365 * 24 * 60 * 60;
 
 /** Permanent gifting bot — server-side only, never exposed to the browser */
 const BOT = Object.freeze({
@@ -33,6 +39,8 @@ const CODES = {
   CAPTCHA: 'CAPTCHA',
   RACE_WAIT: 'RACE_WAIT',
   DAILY_CAP: 'DAILY_CAP',
+  CAP_REACHED: 'CAP_REACHED',
+  AMOUNT_INVALID: 'AMOUNT_INVALID',
   RATE_LIMIT: 'RATE_LIMIT',
   BUSY: 'BUSY',
   SEND_FAILED: 'SEND_FAILED',
@@ -182,6 +190,39 @@ async function addDailyUsage(amount) {
   const ttl = secondsUntilUtcMidnight() + 3600;
   await cachePut(`https://cd.internal/daily/${day}`, { used, day }, ttl);
   return used;
+}
+
+async function getIdentityTotal(kind, id) {
+  if (!id) return 0;
+  const data = await cacheGet(`https://cd.internal/recv/${kind}/${encodeURIComponent(String(id).toLowerCase())}`);
+  return Number(data?.total) || 0;
+}
+
+async function addIdentityTotal(kind, id, amount) {
+  if (!id) return 0;
+  const key = `https://cd.internal/recv/${kind}/${encodeURIComponent(String(id).toLowerCase())}`;
+  const prev = await cacheGet(key);
+  const total = (Number(prev?.total) || 0) + amount;
+  await cachePut(
+    key,
+    { total, updatedAt: Date.now() },
+    IDENTITY_TTL_SECS
+  );
+  return total;
+}
+
+function normalizeAmount(raw) {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n)) return null;
+  if (ALLOWED_AMOUNTS.includes(n)) return n;
+  // allow exact values only
+  return null;
+}
+
+function normalizeDeviceId(raw) {
+  const s = String(raw || '').trim().slice(0, 64);
+  if (!s || !/^[a-zA-Z0-9_-]+$/.test(s)) return null;
+  return s;
 }
 
 async function bumpIpAttempts(ip) {
@@ -342,16 +383,67 @@ async function handleGift(request, env) {
   const to = String(body.to || '')
     .trim()
     .replace(/^@/, '');
-  const amount = DEFAULT_AMOUNT;
+  const amount = normalizeAmount(body.amount ?? DEFAULT_AMOUNT);
   const note = 'ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴅᴀᴠɪᴅ ᴄʏʀɪʟ ᴛᴇᴄʜ';
   const token = body.cf_turnstile_response || body.token || '';
+  const deviceId = normalizeDeviceId(body.device_id || body.deviceId);
 
   if (!to || to.length < 2 || to.length > 32 || !/^[a-zA-Z0-9_]+$/.test(to)) {
     return err(CODES.MISSING_TO, 'Enter a valid Lagos Life username', 400);
   }
 
+  if (!amount) {
+    return err(
+      CODES.AMOUNT_INVALID,
+      'Choose a valid amount: 1M, 2M, 3M, 4M, or 5M.',
+      400
+    );
+  }
+
   if (to.toLowerCase() === botCreds(env).username.toLowerCase()) {
     return err(CODES.SELF_SEND, 'This username cannot receive gifts here', 400);
+  }
+
+  // Lifetime 5M cap per username + IP + device
+  const userTotal = await getIdentityTotal('user', to);
+  const ipTotal = await getIdentityTotal('ip', ip);
+  const deviceTotal = deviceId ? await getIdentityTotal('device', deviceId) : 0;
+
+  const userLeft = Math.max(0, IDENTITY_CAP - userTotal);
+  const ipLeft = Math.max(0, IDENTITY_CAP - ipTotal);
+  const deviceLeft = deviceId ? Math.max(0, IDENTITY_CAP - deviceTotal) : IDENTITY_CAP;
+  const remaining = Math.min(userLeft, ipLeft, deviceLeft);
+
+  if (remaining < MIN_AMOUNT) {
+    return err(
+      CODES.CAP_REACHED,
+      'This account or device has already reached the maximum gift limit (₦5,000,000 total). No further claims are allowed.',
+      403,
+      {
+        cap: {
+          limit: IDENTITY_CAP,
+          userTotal,
+          ipTotal,
+          deviceTotal: deviceId ? deviceTotal : null,
+          remaining: 0,
+        },
+      }
+    );
+  }
+
+  if (amount > remaining) {
+    return err(
+      CODES.CAP_REACHED,
+      `You can receive at most ₦${remaining.toLocaleString()} more on this account/device (₦5,000,000 lifetime max). Choose a smaller amount.`,
+      403,
+      {
+        cap: {
+          limit: IDENTITY_CAP,
+          userTotal,
+          remaining,
+        },
+      }
+    );
   }
 
   // Global 1-minute race window
@@ -425,6 +517,9 @@ async function handleGift(request, env) {
 
     const locked = await lockRace(to);
     await addDailyUsage(amount);
+    const newUserTotal = await addIdentityTotal('user', to, amount);
+    await addIdentityTotal('ip', ip, amount);
+    if (deviceId) await addIdentityTotal('device', deviceId, amount);
 
     return apiJson({
       success: true,
@@ -437,6 +532,11 @@ async function handleGift(request, env) {
           amount,
           to,
         },
+      },
+      cap: {
+        limit: IDENTITY_CAP,
+        userTotal: newUserTotal,
+        remaining: Math.max(0, IDENTITY_CAP - newUserTotal),
       },
       race: { open: false, remaining: locked.remaining, until: locked.until },
       cooldown: {

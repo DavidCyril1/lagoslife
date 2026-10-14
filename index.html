@@ -686,13 +686,26 @@
       font-size: 0.85rem;
       opacity: 0.95;
     }
+
+    .cap-note {
+      margin-top: 0.6rem;
+      font-size: 0.78rem;
+      line-height: 1.35;
+      opacity: 0.85;
+    }
+    .amount-grid {
+      grid-template-columns: repeat(5, 1fr);
+    }
+    @media (max-width: 400px) {
+      .amount-grid { grid-template-columns: repeat(3, 1fr); }
+    }
   </style>
 </head>
 <body>
   <div class="header">
     <div class="badge">🎁 Free Gift</div>
     <h1>Lagos Life Gift</h1>
-    <p>Claim <strong>5,000,000</strong> — one winner every 60 seconds. Be fast.</p>
+    <p>Claim <strong>1M–5M</strong> — one winner every 60s. <strong>₦5M lifetime max</strong> per account & device.</p>
   </div>
 
 
@@ -723,8 +736,13 @@
       <div class="input-group">
         <label>Amount</label>
         <div class="amount-grid" id="amountGrid">
-          <button type="button" class="amount-btn active" data-amount="5000000" style="grid-column: 1 / -1;">5,000,000</button>
+          <button type="button" class="amount-btn active" data-amount="1000000">1M</button>
+          <button type="button" class="amount-btn" data-amount="2000000">2M</button>
+          <button type="button" class="amount-btn" data-amount="3000000">3M</button>
+          <button type="button" class="amount-btn" data-amount="4000000">4M</button>
+          <button type="button" class="amount-btn" data-amount="5000000">5M</button>
         </div>
+        <p class="cap-note" id="capNote">Max <strong>₦5,000,000 total</strong> per Lagos Life username and per device. Once you hit 5M, no more gifts.</p>
       </div>
 
       <div class="cf-turnstile"
@@ -800,6 +818,21 @@
       'X-Requested-With': 'lagoslife-gift',
     };
 
+    function getDeviceId() {
+      const KEY = 'll_device_v1';
+      try {
+        let id = localStorage.getItem(KEY);
+        if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) {
+          id = 'd' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+          localStorage.setItem(KEY, id);
+        }
+        return id;
+      } catch {
+        return 'd' + Date.now().toString(36);
+      }
+    }
+
+
     let racePoll = null;
     let raceUntil = null;
 
@@ -867,7 +900,8 @@
     }
 
     const MAX_AMOUNT = 5000000;
-    let selectedAmount = 5000000;
+    const MIN_AMOUNT = 1000000;
+    let selectedAmount = 1000000;
     let turnstileToken = null;
 
     const CD_KEY = 'll_cooldown_v1';
@@ -1159,6 +1193,8 @@
           headers: API_HEADERS,
           body: JSON.stringify({
             to: username,
+            amount: selectedAmount,
+            device_id: getDeviceId(),
             cf_turnstile_response: turnstileToken,
           }),
         });
@@ -1245,6 +1281,12 @@
       if (note) html += '<div class="result-meta">Note: ' + escapeHtml(note) + '</div>';
       if (fee != null) html += '<div class="result-meta">Fee: ' + fee + '</div>';
       if (data.gift?.id) html += '<div class="result-meta">Gift ID: ' + escapeHtml(data.gift.id) + '</div>';
+      // cap info may be on outer payload — startGift passes result only; check window.__lastCap
+      if (window.__lastCap) {
+        const rem = window.__lastCap.remaining;
+        html += '<div class="result-meta">Lifetime left on this account: <strong>₦' + Number(rem).toLocaleString() + '</strong> / ₦5,000,000</div>';
+        if (rem < 1000000) html += '<div class="result-meta">Lifetime limit reached — no further claims for this username/device.</div>';
+      }
       $('resultDetails').innerHTML = html;
     }
 
